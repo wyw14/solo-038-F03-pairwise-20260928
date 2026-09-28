@@ -43,7 +43,7 @@ func (runtime *Runtime) Equipment() []map[string]any {
 	ready, folderSpeed, cutLength, fault, lots := runtime.folder.Snapshot()
 	values := []map[string]any{
 		{"name": "unwind", "roll": roll, "generation": generation, "owner": feedOwner, "speed": feedSpeed},
-		{"name": "press", "plate": plate, "generation": plateGeneration, "color": color, "phases": phases},
+		{"name": "press", "plate": plate, "generation": plateGeneration, "color": color, "phases": phases, "stop": runtime.PressStopStatus()},
 		{"name": "dryer", "state": runtime.dryerControlStatus()},
 		{"name": "folder", "ready": ready, "speed": folderSpeed, "cut_length": cutLength, "fault": fault, "lots": lots},
 	}

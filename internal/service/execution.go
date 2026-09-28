@@ -48,7 +48,7 @@ func (runtime *Runtime) ExecuteOperation(ctx context.Context, kind string) error
 	case "feed_web":
 		return runtime.feedWebOperation(ctx, current)
 	case "stop_press":
-		return runtime.stopPressOperation(current)
+		return runtime.stopPressOperation(ctx, current)
 	case "adjust_phase":
 		return runtime.registerOperation(current)
 	case "switch_ink":
@@ -140,26 +140,6 @@ func (runtime *Runtime) verifyPath(readings []sensor.Reading) error {
 		return fmt.Errorf("web path diagnostics are incomplete")
 	}
 	return nil
-}
-
-func (runtime *Runtime) stopPressOperation(current model.Job) error {
-	now := time.Now()
-	command := runtime.pressControl.BeginStop(current, uint64(now.UnixNano()), now)
-	proofs := map[string]model.Acknowledgement{}
-	for _, unit := range []string{"cyan", "magenta", "yellow", "black"} {
-		if err := runtime.pressUnits.SetSpeed(unit, 0); err != nil {
-			return err
-		}
-		ack := model.Acknowledgement{Unit: unit, Operation: command.Operation, Epoch: command.Epoch, Value: 0, At: now}
-		if err := runtime.pressControl.AcknowledgeStop(ack); err != nil {
-			return err
-		}
-		proofs[unit] = ack
-	}
-	if len(model.SortedUnits(proofs)) != 4 || !runtime.pressControl.CanSplice() {
-		return fmt.Errorf("press stop proof is incomplete")
-	}
-	return job.RequireSpliceReady(current, true, true, true)
 }
 
 func (runtime *Runtime) registerOperation(current model.Job) error {

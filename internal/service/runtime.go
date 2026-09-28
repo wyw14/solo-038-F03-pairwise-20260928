@@ -26,7 +26,12 @@ type Config struct {
 	FestoonCapacity   float64
 	RegisterGap       time.Duration
 	RegisterTolerance float64
+	StopAckTimeout    time.Duration
 }
+
+// defaultStopAckTimeout bounds how long a stop command waits for the four
+// printing units' zero-speed receipts before the splice stays locked.
+const defaultStopAckTimeout = 2 * time.Second
 
 type Runtime struct {
 	mu              sync.RWMutex
@@ -61,6 +66,9 @@ type Runtime struct {
 func NewRuntime(config Config) (*Runtime, error) {
 	if config.DataDir == "" || config.FestoonCapacity <= 0 || config.RegisterGap <= 0 || config.RegisterTolerance <= 0 {
 		return nil, fmt.Errorf("runtime configuration is incomplete")
+	}
+	if config.StopAckTimeout <= 0 {
+		config.StopAckTimeout = defaultStopAckTimeout
 	}
 	path, err := web.NewPath([]web.Segment{{Name: "unwind", Length: 4, Tension: 8, Available: true}, {Name: "press", Length: 12, Tension: 8, Available: true}, {Name: "dryer", Length: 18, Tension: 7, Available: true}, {Name: "folder", Length: 5, Tension: 6, Available: true}})
 	if err != nil {

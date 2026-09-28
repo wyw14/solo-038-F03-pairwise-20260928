@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wyw14/solo-038/internal/dryer"
@@ -145,21 +146,55 @@ func (runtime *Runtime) verifyPath(readings []sensor.Reading) error {
 func (runtime *Runtime) stopPressOperation(current model.Job) error {
 	now := time.Now()
 	command := runtime.pressControl.BeginStop(current, uint64(now.UnixNano()), now)
-	proofs := map[string]model.Acknowledgement{}
-	for _, unit := range []string{"cyan", "magenta", "yellow", "black"} {
+	deadline := runtime.pressControl.StopDeadline()
+	// Every unit gets the stop command and its own receipt slot. A unit
+	// that never reports zero speed stays pending; the final status
+	// settles as timed_out and the splice stays locked.
+	var failures []string
+	for _, unit := range runtime.pressUnits.Names() {
 		if err := runtime.pressUnits.SetSpeed(unit, 0); err != nil {
-			return err
+			failures = append(failures, unit)
+			continue
 		}
-		ack := model.Acknowledgement{Unit: unit, Operation: command.Operation, Epoch: command.Epoch, Value: 0, At: now}
+		unitState, err := runtime.awaitZeroSpeed(unit, deadline)
+		if err != nil {
+			failures = append(failures, unit)
+			continue
+		}
+		ack := model.Acknowledgement{Unit: unit, Operation: command.Operation, Epoch: command.Epoch, Value: unitState.Speed, At: time.Now().UTC()}
 		if err := runtime.pressControl.AcknowledgeStop(ack); err != nil {
-			return err
+			failures = append(failures, unit)
 		}
-		proofs[unit] = ack
 	}
-	if len(model.SortedUnits(proofs)) != 4 || !runtime.pressControl.CanSplice() {
-		return fmt.Errorf("press stop proof is incomplete")
+	status := runtime.pressControl.StopStatus(time.Now())
+	if !status.Complete() {
+		message := fmt.Sprintf("press stop %s: units %s have not confirmed zero speed", status.Outcome, strings.Join(status.Pending, ", "))
+		runtime.RecordIncident("warning", "press", message)
+		return fmt.Errorf("%s", message)
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("press stop receipts failed for units %s", strings.Join(failures, ", "))
 	}
 	return job.RequireSpliceReady(current, true, true, true)
+}
+
+// awaitZeroSpeed waits for one press unit to report zero speed before the
+// stop deadline. A unit that never reports zero keeps its receipt pending,
+// so the stop command settles as timed out and the splice stays locked.
+func (runtime *Runtime) awaitZeroSpeed(unit string, deadline time.Time) (press.Unit, error) {
+	for {
+		unitState, ok := runtime.pressUnits.Unit(unit)
+		if !ok {
+			return press.Unit{}, fmt.Errorf("press unit %s is unknown", unit)
+		}
+		if unitState.ZeroSensor {
+			return unitState, nil
+		}
+		if !time.Now().Before(deadline) {
+			return press.Unit{}, fmt.Errorf("press unit %s did not reach zero speed before the stop deadline", unit)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func (runtime *Runtime) registerOperation(current model.Job) error {
